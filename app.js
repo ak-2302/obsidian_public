@@ -10,6 +10,7 @@ const state = {
   active: null,
   noteMap: new Map(),
   assetMap: new Map(),
+  blockMap: new Map(),
 };
 
 function getRepoInfo() {
@@ -64,6 +65,14 @@ function slugify(value) {
 function titleFromPath(relativePath) {
   const filename = relativePath.split("/").pop();
   return titleFromFilename(filename);
+}
+
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function normalizeWikiTarget(target, currentPath) {
@@ -130,6 +139,36 @@ function stripFrontmatter(markdown) {
   return markdown.replace(/^---[\s\S]*?---\n?/, "");
 }
 
+function collectBlocks(markdown, notePath) {
+  const blocks = new Map();
+  const lines = stripFrontmatter(markdown).split("\n");
+  let currentId = null;
+  let currentLines = [];
+
+  const flush = () => {
+    if (currentId) {
+      blocks.set(`${notePath}#${currentId}`, currentLines.join("\n").trim());
+    }
+    currentId = null;
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const blockMatch = line.match(/\^([A-Za-z0-9_-]+)\s*$/);
+    if (blockMatch) {
+      flush();
+      currentId = blockMatch[1];
+      continue;
+    }
+    if (currentId) {
+      currentLines.push(line);
+    }
+  }
+
+  flush();
+  return blocks;
+}
+
 function extractHeadingSection(markdown, headingText) {
   const body = stripFrontmatter(markdown);
   const targetSlug = slugify(headingText);
@@ -160,6 +199,20 @@ function extractHeadingSection(markdown, headingText) {
   return lines.slice(startIndex, endIndex).join("\n");
 }
 
+function extractBlockSection(markdown, blockId) {
+  const body = stripFrontmatter(markdown);
+  const lines = body.split("\n");
+  const startIndex = lines.findIndex((line) => line.includes(`^${blockId}`));
+  if (startIndex === -1) return null;
+  const chunk = [];
+  for (let i = startIndex; i < lines.length; i += 1) {
+    const line = lines[i].replace(new RegExp(`\\s*\\^${blockId}\\s*$`), "");
+    if (i > startIndex && line.trim() === "") break;
+    chunk.push(line);
+  }
+  return chunk.join("\n").trim();
+}
+
 function addHeadingAnchors(container) {
   container.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((heading) => {
     if (!heading.id) {
@@ -168,25 +221,96 @@ function addHeadingAnchors(container) {
   });
 }
 
+function renderMathInText(text) {
+  const blockPattern = /\$\$([\s\S]+?)\$\$/g;
+  const inlinePattern = /(^|[^$])\$([^\$\n]+?)\$([^$]|$)/g;
+  const parenInlinePattern = /\\\((.+?)\\\)/g;
+  let output = text.replace(blockPattern, (_, formula) => {
+    return `@@MATHBLOCK:${encodeURIComponent(formula.trim())}@@`;
+  });
+  output = output.replace(inlinePattern, (_, prefix, formula, suffix) => {
+    return `${prefix}@@MATHINLINE:${encodeURIComponent(formula.trim())}@@${suffix}`;
+  });
+  output = output.replace(parenInlinePattern, (_, formula) => {
+    return `@@MATHINLINE:${encodeURIComponent(formula.trim())}@@`;
+  });
+  return output;
+}
+
+function restoreMathInHtml(html) {
+  return html
+    .replace(/@@MATHBLOCK:([^@]+?)@@/g, (_, encoded) => {
+      const formula = decodeURIComponent(encoded);
+      return `<div class="math math-block" data-formula="${escapeHtml(formula)}"></div>`;
+    })
+    .replace(/@@MATHINLINE:([^@]+?)@@/g, (_, encoded) => {
+      const formula = decodeURIComponent(encoded);
+      return `<span class="math math-inline" data-formula="${escapeHtml(formula)}"></span>`;
+    });
+}
+
+function renderKatex(container) {
+  container.querySelectorAll(".math").forEach((node) => {
+    const formula = node.dataset.formula || "";
+    try {
+      katex.render(formula, node, {
+        displayMode: node.classList.contains("math-block"),
+        throwOnError: false,
+      });
+    } catch (error) {
+      node.textContent = formula;
+      node.classList.add("math-error");
+    }
+  });
+}
+
+function renderEmbeddedYouTube(url) {
+  try {
+    const parsed = new URL(url);
+    let videoId = "";
+    if (parsed.hostname.includes("youtu.be")) {
+      videoId = parsed.pathname.replace(/^\/+/, "");
+    } else if (parsed.searchParams.get("v")) {
+      videoId = parsed.searchParams.get("v");
+    } else if (parsed.pathname.startsWith("/embed/")) {
+      videoId = parsed.pathname.split("/embed/")[1];
+    }
+    if (!videoId) return null;
+    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+    return `<div class="embed embed-video"><iframe src="${embedUrl}" title="YouTube video" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div>`;
+  } catch {
+    return null;
+  }
+}
+
 async function renderMarkdown(markdown, currentNote, stack = []) {
   const { body } = extractFrontmatter(markdown);
-  const replaced = await replaceCustomSyntax(body, currentNote, stack);
+  const withMath = renderMathInText(body);
+  const replaced = await replaceCustomSyntax(withMath, currentNote, stack);
   const html = marked.parse(replaced);
   const parser = new DOMParser();
-  const doc = parser.parseFromString(`<article>${html}</article>`, "text/html");
+  const doc = parser.parseFromString(`<article>${restoreMathInHtml(html)}</article>`, "text/html");
   addHeadingAnchors(doc.body);
+  renderKatex(doc.body);
   return doc.body.innerHTML;
 }
 
 async function replaceCustomSyntax(markdown, currentNote, stack) {
   const tokens = [];
-  const pattern = /(!?)\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
+  const pattern = /(!?)\[\[([^\]|#^]+)(?:([#^])([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
   let output = markdown;
 
   for (const match of markdown.matchAll(pattern)) {
-    const [fullMatch, bang, target, heading, label] = match;
+    const [fullMatch, bang, target, refType, refValue, label] = match;
     const token = `@@OBSIDIAN_${tokens.length}@@`;
-    tokens.push({ token, bang, target: target.trim(), heading: heading?.trim() || "", label: label?.trim() || "" });
+    tokens.push({
+      token,
+      bang,
+      target: target.trim(),
+      refType: refType || "",
+      refValue: refValue?.trim() || "",
+      label: label?.trim() || "",
+    });
     output = output.replace(fullMatch, token);
   }
 
@@ -203,17 +327,24 @@ async function renderToken(token, currentNote, stack) {
   const targetNote = resolveNoteCandidate(token.target, currentNote.path);
   const targetAsset = resolveAssetPath(token.target, currentNote.path);
   const displayLabel = token.label || token.target;
+  const targetIsUrl = /^https?:\/\//i.test(token.target);
+  const targetHeading = token.refType === "#" ? token.refValue : "";
+  const targetBlock = token.refType === "^" ? token.refValue : "";
 
   if (!isEmbed) {
-    if (token.heading) {
-      const targetSlug = slugify(token.target);
-      const headingSlug = slugify(token.heading);
+    if (targetHeading) {
+      const headingSlug = slugify(targetHeading);
       const note = targetNote;
       if (note) {
         const href = `?note=${encodeURIComponent(note.slug)}#${headingSlug}`;
         const text = displayLabel || note.title;
         return `[${text}](${href})`;
       }
+    }
+
+    if (targetBlock && targetNote) {
+      const href = `?note=${encodeURIComponent(targetNote.slug)}#${encodeURIComponent(`^${targetBlock}`)}`;
+      return `[${displayLabel || targetNote.title}](${href})`;
     }
 
     if (targetAsset) {
@@ -224,8 +355,12 @@ async function renderToken(token, currentNote, stack) {
       return `[${displayLabel}](${href})`;
     }
 
+    if (targetIsUrl) {
+      return `[${displayLabel}](${token.target})`;
+    }
+
     if (targetNote) {
-      const href = `?note=${encodeURIComponent(targetNote.slug)}${token.heading ? `#${slugify(token.heading)}` : ""}`;
+      const href = `?note=${encodeURIComponent(targetNote.slug)}${targetHeading ? `#${slugify(targetHeading)}` : targetBlock ? `#${encodeURIComponent(`^${targetBlock}`)}` : ""}`;
       return `[${displayLabel || targetNote.title}](${href})`;
     }
 
@@ -239,6 +374,12 @@ async function renderToken(token, currentNote, stack) {
     return `<a class="embed embed-attachment" href="./${targetAsset}">${displayLabel || titleFromPath(targetAsset)}</a>`;
   }
 
+  if (targetIsUrl) {
+    const youtubeEmbed = renderEmbeddedYouTube(token.target);
+    if (youtubeEmbed) return youtubeEmbed;
+    return `<iframe class="embed embed-external" src="${token.target}" loading="lazy" referrerpolicy="no-referrer"></iframe>`;
+  }
+
   if (!targetNote) {
     return `<div class="embed embed-missing">見つかりません: ${displayLabel || token.target}</div>`;
   }
@@ -247,17 +388,30 @@ async function renderToken(token, currentNote, stack) {
     return `<div class="embed embed-recursive">循環参照のため省略: ${targetNote.title}</div>`;
   }
 
+  const blockKey = targetBlock ? `${targetNote.path}#${targetBlock}` : "";
+  if (targetBlock && state.blockMap.has(blockKey)) {
+    return `<blockquote class="embed embed-block">${escapeHtml(state.blockMap.get(blockKey))}</blockquote>`;
+  }
+
   const response = await fetch(targetNote.path);
   if (!response.ok) {
     return `<div class="embed embed-missing">読み込めません: ${targetNote.title}</div>`;
   }
   const raw = await response.text();
-  const sectionMarkdown = token.heading ? extractHeadingSection(raw, token.heading) : raw;
+  const blocks = collectBlocks(raw, targetNote.path);
+  for (const [key, value] of blocks.entries()) {
+    state.blockMap.set(key, value);
+  }
+  const sectionMarkdown = targetHeading
+    ? extractHeadingSection(raw, targetHeading)
+    : targetBlock
+      ? extractBlockSection(raw, targetBlock) || state.blockMap.get(blockKey) || raw
+      : raw;
   if (!sectionMarkdown) {
-    return `<div class="embed embed-missing">見出しが見つかりません: ${displayLabel || token.heading}</div>`;
+    return `<div class="embed embed-missing">参照が見つかりません: ${displayLabel || token.refValue}</div>`;
   }
   const html = await renderMarkdown(sectionMarkdown, targetNote, [...stack, currentNote.path, targetNote.path]);
-  const headingLabel = token.heading ? `${targetNote.title} / ${token.heading}` : targetNote.title;
+  const headingLabel = targetHeading ? `${targetNote.title} / ${targetHeading}` : targetBlock ? `${targetNote.title} / ^${targetBlock}` : targetNote.title;
   return `<details class="embed embed-note" open><summary>${headingLabel}</summary>${html}</details>`;
 }
 
@@ -267,6 +421,7 @@ async function loadNote(note) {
     throw new Error(`ノートを読み込めませんでした: ${note.path}`);
   }
   const raw = await response.text();
+  state.blockMap = collectBlocks(raw, note.path);
   const html = await renderMarkdown(raw, note, [note.path]);
   contentEl.innerHTML = html;
   addHeadingAnchors(contentEl);
