@@ -37,6 +37,7 @@ function pathToSlug(path) {
     .replace(/\.md$/i, "")
     .replace(/^\./, "")
     .replace(/^[.\-_]+/, "")
+    .replace(/[\/]+/g, "-")
     .replace(/[-_]+/g, "-")
     .toLowerCase();
 }
@@ -116,9 +117,10 @@ async function loadNotes() {
   );
 
   return files
-    .filter((file) => !file.path.split("/").pop().startsWith("."))
+    .filter((file) => !file.path.replace(/^notes\//, "").split("/").some((part) => part.startsWith(".")))
     .map((file) => {
-      const filename = file.path.split("/").pop();
+      const relativePath = file.path.replace(/^notes\//, "");
+      const filename = relativePath.split("/").pop();
       const slug = pathToSlug(file.path);
       const title = titleFromFilename(filename);
       return {
