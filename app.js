@@ -10,12 +10,35 @@ const state = {
   active: null,
 };
 
-async function loadIndex() {
-  const response = await fetch("./notes/index.json");
-  if (!response.ok) {
-    throw new Error("notes/index.json を読み込めませんでした");
-  }
-  return response.json();
+function getRepoInfo() {
+  const host = window.location.hostname;
+  const pathParts = window.location.pathname.split("/").filter(Boolean);
+  const isGitHubPages = host.endsWith(".github.io");
+  const owner = isGitHubPages ? host.replace(/\.github\.io$/, "") : null;
+  const repo = pathParts[0] || null;
+  return { owner, repo };
+}
+
+function titleFromFilename(filename) {
+  return filename
+    .replace(/\.md$/i, "")
+    .replace(/^[.\-_]+/, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function pathToSlug(path) {
+  return path
+    .replace(/^notes\//, "")
+    .replace(/\.md$/i, "")
+    .replace(/^\./, "")
+    .replace(/^[.\-_]+/, "")
+    .replace(/[-_]+/g, "-")
+    .toLowerCase();
 }
 
 function slugify(value) {
@@ -40,14 +63,6 @@ function stripFrontmatter(markdown) {
   return markdown.replace(/^---[\s\S]*?---\n?/, "");
 }
 
-function excerptFromMarkdown(markdown) {
-  return markdown
-    .replace(/^---[\s\S]*?---\n?/, "")
-    .replace(/\n+/g, " ")
-    .replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .slice(0, 120);
-}
-
 async function loadNote(note) {
   const response = await fetch(note.path);
   if (!response.ok) {
@@ -66,6 +81,55 @@ async function loadNote(note) {
   const url = new URL(window.location.href);
   url.searchParams.set("note", note.slug);
   history.replaceState({}, "", url);
+}
+
+async function loadNotes() {
+  const { owner, repo } = getRepoInfo();
+  if (!owner || !repo) {
+    throw new Error("GitHub Pages のリポジトリ名を特定できませんでした");
+  }
+
+  const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+    },
+  });
+  if (!repoResponse.ok) {
+    throw new Error("リポジトリ情報を取得できませんでした");
+  }
+
+  const repoData = await repoResponse.json();
+  const branch = repoData.default_branch || "main";
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
+  const response = await fetch(apiUrl, {
+    headers: {
+      Accept: "application/vnd.github+json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error("ノート一覧を取得できませんでした");
+  }
+
+  const data = await response.json();
+  const files = (data.tree || []).filter(
+    (entry) => entry.type === "blob" && entry.path.startsWith("notes/") && entry.path.toLowerCase().endsWith(".md"),
+  );
+
+  return files
+    .filter((file) => !file.path.split("/").pop().startsWith("."))
+    .map((file) => {
+      const filename = file.path.split("/").pop();
+      const slug = pathToSlug(file.path);
+      const title = titleFromFilename(filename);
+      return {
+        slug,
+        title,
+        path: `./${file.path}`,
+        description: "",
+        tags: [],
+        excerpt: `ファイル: ${filename}`,
+      };
+    });
 }
 
 function renderList(notes) {
@@ -106,13 +170,7 @@ function applyFilter(query) {
 }
 
 async function init() {
-  const index = await loadIndex();
-  state.notes = index.notes.map((note) => ({
-    ...note,
-    excerpt: note.excerpt || excerptFromMarkdown(note.description || note.title),
-    description: note.description || "",
-    tags: note.tags || [],
-  }));
+  state.notes = await loadNotes();
   state.filtered = state.notes;
   renderList(state.notes);
 
