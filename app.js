@@ -450,14 +450,17 @@ async function loadNote(note) {
 
 async function loadNotes() {
   let files = [];
+  let assets = [];
   try {
     const manifestResponse = await fetch("./notes-manifest.json");
     if (manifestResponse.ok) {
       const manifest = await manifestResponse.json();
       files = (manifest.notes || []).filter((note) => note.path);
+      assets = (manifest.assets || []).filter((asset) => asset.path);
     }
   } catch {
     files = [];
+    assets = [];
   }
 
   if (files.length === 0) {
@@ -517,9 +520,10 @@ async function loadNotes() {
 
   state.noteMap = new Map(notes.map((note) => [note.slug, note]));
   state.assetMap = new Map(
-    files
-      .filter((file) => !file.path.toLowerCase().endsWith(".md"))
-      .map((file) => [file.path, { path: file.path }]),
+    [
+      ...assets,
+      ...files.filter((file) => !file.path.toLowerCase().endsWith(".md")),
+    ].map((file) => [file.path, { path: file.path }]),
   );
   return notes;
 }

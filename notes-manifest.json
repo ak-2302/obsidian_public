@@ -15,5 +15,10 @@
       "title": "Welcome",
       "isDraft": false
     }
+  ],
+  "assets": [
+    {
+      "path": "notes/assets/demo-image.svg"
+    }
   ]
 }

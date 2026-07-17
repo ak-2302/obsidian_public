@@ -21,6 +21,16 @@ title: Demo
 
 `[[Publishing Notes]]` は通常リンクとして動きます。
 
+## 画像
+
+保存された画像の例です。
+
+![[assets/demo-image.svg]]
+
+外部 URL から参照する画像の例です。
+
+![](https://upload.wikimedia.org/wikipedia/commons/4/4a/Commons-logo.svg)
+
 ## ブロック参照
 
 次の文はブロック参照用です。`^demo-block` を使って呼び出せます。
@@ -39,14 +49,7 @@ $$
 \int_0^1 x^2 \, dx = \frac{1}{3}
 $$
 
-## 図
 
-```mermaid
-flowchart TD
-  A[ノートを書く] --> B[公開対象を notes/ に置く]
-  B --> C[GitHub Pages で公開]
-  C --> D[ブラウザで閲覧]
-```
 
 ## YouTube
 
@@ -57,4 +60,3 @@ flowchart TD
 ## 見出し参照
 
 このページ内の [[Demo#数式]] や [[Demo#図]] へのリンクも確認できます。
-
