@@ -1,0 +1,20 @@
+{
+  "notes": [
+    {
+      "slug": "welcome",
+      "title": "Welcome",
+      "path": "./notes/welcome.md",
+      "description": "公開サイトの入口になるノート",
+      "tags": ["intro", "public"],
+      "excerpt": "このサイトは Obsidian 形式のノートを読みやすく公開するための土台です。"
+    },
+    {
+      "slug": "publishing",
+      "title": "Publishing Notes",
+      "path": "./notes/publishing.md",
+      "description": "公開対象をどう分けるかのメモ",
+      "tags": ["workflow", "publish"],
+      "excerpt": "公開したいノートだけを index に追加すれば、サイトに反映されます。"
+    }
+  ]
+}
