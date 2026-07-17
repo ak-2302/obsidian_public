@@ -150,30 +150,15 @@ function stripFrontmatter(markdown) {
 function collectBlocks(markdown, notePath) {
   const blocks = new Map();
   const lines = stripFrontmatter(markdown).split("\n");
-  let currentId = null;
-  let currentLines = [];
-
-  const flush = () => {
-    if (currentId) {
-      blocks.set(`${notePath}#${currentId}`, currentLines.join("\n").trim());
-    }
-    currentId = null;
-    currentLines = [];
-  };
-
   for (const line of lines) {
-    const blockMatch = line.match(/\^([A-Za-z0-9_-]+)\s*$/);
-    if (blockMatch) {
-      flush();
-      currentId = blockMatch[1];
-      continue;
-    }
-    if (currentId) {
-      currentLines.push(line);
+    const blockMatch = line.match(/^(.*?)(?:\s+\^([A-Za-z0-9_-]+))\s*$/);
+    if (blockMatch && blockMatch[2]) {
+      const content = blockMatch[1].trim();
+      if (content) {
+        blocks.set(`${notePath}#${blockMatch[2]}`, content);
+      }
     }
   }
-
-  flush();
   return blocks;
 }
 
@@ -212,13 +197,7 @@ function extractBlockSection(markdown, blockId) {
   const lines = body.split("\n");
   const startIndex = lines.findIndex((line) => line.includes(`^${blockId}`));
   if (startIndex === -1) return null;
-  const chunk = [];
-  for (let i = startIndex; i < lines.length; i += 1) {
-    const line = lines[i].replace(new RegExp(`\\s*\\^${blockId}\\s*$`), "");
-    if (i > startIndex && line.trim() === "") break;
-    chunk.push(line);
-  }
-  return chunk.join("\n").trim();
+  return lines[startIndex].replace(new RegExp(`\\s*\\^${blockId}\\s*$`), "").trim() || null;
 }
 
 function addHeadingAnchors(container) {
@@ -470,44 +449,61 @@ async function loadNote(note) {
 }
 
 async function loadNotes() {
-  const { owner, repo } = getRepoInfo();
-  if (!owner || !repo) {
-    throw new Error("GitHub Pages のリポジトリ名を特定できませんでした");
+  let files = [];
+  try {
+    const manifestResponse = await fetch("./notes-manifest.json");
+    if (manifestResponse.ok) {
+      const manifest = await manifestResponse.json();
+      files = (manifest.notes || []).filter((note) => note.path);
+    }
+  } catch {
+    files = [];
   }
 
-  const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-    },
-  });
-  if (!repoResponse.ok) {
-    throw new Error("リポジトリ情報を取得できませんでした");
-  }
+  if (files.length === 0) {
+    const { owner, repo } = getRepoInfo();
+    if (!owner || !repo) {
+      throw new Error("公開対象の一覧を取得できませんでした");
+    }
 
-  const repoData = await repoResponse.json();
-  const branch = repoData.default_branch || "main";
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
-  const response = await fetch(apiUrl, {
-    headers: {
-      Accept: "application/vnd.github+json",
-    },
-  });
-  if (!response.ok) {
-    throw new Error("ノート一覧を取得できませんでした");
-  }
+    const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!repoResponse.ok) {
+      throw new Error("リポジトリ情報を取得できませんでした");
+    }
 
-  const data = await response.json();
-  const files = (data.tree || []).filter(
-    (entry) => entry.type === "blob" && entry.path.startsWith("notes/") && entry.path.toLowerCase().endsWith(".md"),
-  );
+    const repoData = await repoResponse.json();
+    const branch = repoData.default_branch || "main";
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
+    const response = await fetch(apiUrl, {
+      headers: {
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!response.ok) {
+      throw new Error("ノート一覧を取得できませんでした");
+    }
+
+    const data = await response.json();
+    files = (data.tree || [])
+      .filter((entry) => entry.type === "blob" && entry.path.startsWith("notes/") && entry.path.toLowerCase().endsWith(".md"))
+      .map((entry) => ({
+        path: entry.path,
+        title: titleFromFilename(entry.path.split("/").pop()),
+        isDraft: false,
+      }));
+  }
 
   const notes = files
-    .filter((file) => !file.path.replace(/^notes\//, "").split("/").some((part) => part.startsWith(".")))
+    .filter((file) => !file.isDraft && !file.path.replace(/^notes\//, "").split("/").some((part) => part.startsWith(".")))
     .map((file) => {
       const relativePath = file.path.replace(/^notes\//, "");
       const filename = relativePath.split("/").pop();
       const slug = pathToSlug(file.path);
-      const title = titleFromFilename(filename);
+      const title = file.title || titleFromFilename(filename);
       return {
         slug,
         title,
@@ -519,17 +515,12 @@ async function loadNotes() {
       };
     });
 
-  const assets = (data.tree || []).filter((entry) => {
-    return (
-      entry.type === "blob" &&
-      entry.path.startsWith("notes/") &&
-      !entry.path.toLowerCase().endsWith(".md") &&
-      !entry.path.replace(/^notes\//, "").split("/").some((part) => part.startsWith("."))
-    );
-  });
-
   state.noteMap = new Map(notes.map((note) => [note.slug, note]));
-  state.assetMap = new Map(assets.map((asset) => [asset.path, asset]));
+  state.assetMap = new Map(
+    files
+      .filter((file) => !file.path.toLowerCase().endsWith(".md"))
+      .map((file) => [file.path, { path: file.path }]),
+  );
   return notes;
 }
 

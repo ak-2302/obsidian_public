@@ -1,0 +1,19 @@
+{
+  "notes": [
+    {
+      "path": "notes/demo.md",
+      "title": "Demo",
+      "isDraft": false
+    },
+    {
+      "path": "notes/publishing.md",
+      "title": "Publishing Notes",
+      "isDraft": false
+    },
+    {
+      "path": "notes/welcome.md",
+      "title": "Welcome",
+      "isDraft": false
+    }
+  ]
+}
