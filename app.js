@@ -8,6 +8,8 @@ const state = {
   notes: [],
   filtered: [],
   active: null,
+  noteMap: new Map(),
+  assetMap: new Map(),
 };
 
 function getRepoInfo() {
@@ -42,6 +44,14 @@ function pathToSlug(path) {
     .toLowerCase();
 }
 
+function stripNotesPrefix(path) {
+  return path.replace(/^notes\//, "");
+}
+
+function normalizeNoteRelativePath(path) {
+  return path.replace(/^\.\/?/, "").replace(/^notes\//, "");
+}
+
 function slugify(value) {
   return value
     .toLowerCase()
@@ -51,17 +61,204 @@ function slugify(value) {
     .replace(/\-+/g, "-");
 }
 
-function transformWikilinks(markdown, titles) {
-  return markdown.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_, target, label) => {
-    const slug = slugify(target);
-    const known = titles[slug] ?? target;
-    const text = label ?? known;
-    return `[${text}](?note=${encodeURIComponent(slug)})`;
-  });
+function titleFromPath(relativePath) {
+  const filename = relativePath.split("/").pop();
+  return titleFromFilename(filename);
+}
+
+function normalizeWikiTarget(target, currentPath) {
+  const trimmed = target.trim();
+  const currentDir = currentPath.includes("/") ? currentPath.split("/").slice(0, -1).join("/") : "";
+  const withMd = trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`;
+  const relativeCandidate = currentDir && !trimmed.includes("/") && !trimmed.startsWith(".") ? `${currentDir}/${withMd}` : withMd;
+  const strippedCandidate = withMd.replace(/^\.\//, "");
+  const candidates = [trimmed, withMd, relativeCandidate, strippedCandidate];
+  return [...new Set(candidates)];
+}
+
+function resolveNoteCandidate(target, currentPath) {
+  const currentRelativePath = normalizeNoteRelativePath(currentPath);
+  const candidates = normalizeWikiTarget(target, currentRelativePath);
+  for (const candidate of candidates) {
+    const relative = candidate.replace(/^notes\//, "");
+    const slug = pathToSlug(candidate.startsWith("notes/") ? candidate : `notes/${relative}`);
+    const bySlug = state.noteMap.get(slug);
+    if (bySlug) return bySlug;
+
+    const stem = relative.replace(/\.md$/i, "").replace(/^[.\-_]+/, "");
+    for (const note of state.notes) {
+      const noteStem = stripNotesPrefix(note.path).replace(/\.md$/i, "");
+      if (noteStem === stem || note.title.toLowerCase() === stem.toLowerCase()) {
+        return note;
+      }
+    }
+  }
+  return null;
+}
+
+function resolveAssetPath(target, currentPath) {
+  const currentRelativePath = normalizeNoteRelativePath(currentPath);
+  const currentDir = currentRelativePath.includes("/") ? currentRelativePath.split("/").slice(0, -1).join("/") : "";
+  const cleanTarget = target.replace(/^\.\//, "");
+  const candidates = [];
+
+  if (currentDir && !cleanTarget.includes("/")) {
+    candidates.push(`notes/${currentDir}/${cleanTarget}`);
+  }
+  candidates.push(`notes/${cleanTarget}`);
+  candidates.push(cleanTarget.startsWith("notes/") ? cleanTarget : `notes/${cleanTarget}`);
+
+  const normalized = [...new Set(candidates.map((candidate) => candidate.replace(/\/+/g, "/")))];
+  for (const candidate of normalized) {
+    if (state.assetMap.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+function extractFrontmatter(markdown) {
+  const match = markdown.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) return { body: markdown, meta: {} };
+  const meta = {};
+  for (const line of match[1].split("\n")) {
+    const pair = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (pair) meta[pair[1].toLowerCase()] = pair[2].replace(/^["']|["']$/g, "");
+  }
+  return { body: markdown.slice(match[0].length), meta };
 }
 
 function stripFrontmatter(markdown) {
   return markdown.replace(/^---[\s\S]*?---\n?/, "");
+}
+
+function extractHeadingSection(markdown, headingText) {
+  const body = stripFrontmatter(markdown);
+  const targetSlug = slugify(headingText);
+  const lines = body.split("\n");
+  let startIndex = -1;
+  let startLevel = 0;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (match && slugify(match[2]) === targetSlug) {
+      startIndex = i;
+      startLevel = match[1].length;
+      break;
+    }
+  }
+
+  if (startIndex === -1) return null;
+
+  let endIndex = lines.length;
+  for (let i = startIndex + 1; i < lines.length; i += 1) {
+    const match = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (match && match[1].length <= startLevel) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  return lines.slice(startIndex, endIndex).join("\n");
+}
+
+function addHeadingAnchors(container) {
+  container.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((heading) => {
+    if (!heading.id) {
+      heading.id = slugify(heading.textContent || "");
+    }
+  });
+}
+
+async function renderMarkdown(markdown, currentNote, stack = []) {
+  const { body } = extractFrontmatter(markdown);
+  const replaced = await replaceCustomSyntax(body, currentNote, stack);
+  const html = marked.parse(replaced);
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<article>${html}</article>`, "text/html");
+  addHeadingAnchors(doc.body);
+  return doc.body.innerHTML;
+}
+
+async function replaceCustomSyntax(markdown, currentNote, stack) {
+  const tokens = [];
+  const pattern = /(!?)\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
+  let output = markdown;
+
+  for (const match of markdown.matchAll(pattern)) {
+    const [fullMatch, bang, target, heading, label] = match;
+    const token = `@@OBSIDIAN_${tokens.length}@@`;
+    tokens.push({ token, bang, target: target.trim(), heading: heading?.trim() || "", label: label?.trim() || "" });
+    output = output.replace(fullMatch, token);
+  }
+
+  for (const item of tokens) {
+    const replacement = await renderToken(item, currentNote, stack);
+    output = output.replace(item.token, replacement);
+  }
+
+  return output;
+}
+
+async function renderToken(token, currentNote, stack) {
+  const isEmbed = token.bang === "!";
+  const targetNote = resolveNoteCandidate(token.target, currentNote.path);
+  const targetAsset = resolveAssetPath(token.target, currentNote.path);
+  const displayLabel = token.label || token.target;
+
+  if (!isEmbed) {
+    if (token.heading) {
+      const targetSlug = slugify(token.target);
+      const headingSlug = slugify(token.heading);
+      const note = targetNote;
+      if (note) {
+        const href = `?note=${encodeURIComponent(note.slug)}#${headingSlug}`;
+        const text = displayLabel || note.title;
+        return `[${text}](${href})`;
+      }
+    }
+
+    if (targetAsset) {
+      const href = `./${targetAsset}`;
+      if (/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(targetAsset)) {
+        return `![${displayLabel}](${href})`;
+      }
+      return `[${displayLabel}](${href})`;
+    }
+
+    if (targetNote) {
+      const href = `?note=${encodeURIComponent(targetNote.slug)}${token.heading ? `#${slugify(token.heading)}` : ""}`;
+      return `[${displayLabel || targetNote.title}](${href})`;
+    }
+
+    return displayLabel;
+  }
+
+  if (targetAsset) {
+    if (/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(targetAsset)) {
+      return `<figure class="embed embed-image"><img src="./${targetAsset}" alt="${displayLabel || titleFromPath(targetAsset)}" /></figure>`;
+    }
+    return `<a class="embed embed-attachment" href="./${targetAsset}">${displayLabel || titleFromPath(targetAsset)}</a>`;
+  }
+
+  if (!targetNote) {
+    return `<div class="embed embed-missing">見つかりません: ${displayLabel || token.target}</div>`;
+  }
+
+  if (stack.includes(targetNote.path)) {
+    return `<div class="embed embed-recursive">循環参照のため省略: ${targetNote.title}</div>`;
+  }
+
+  const response = await fetch(targetNote.path);
+  if (!response.ok) {
+    return `<div class="embed embed-missing">読み込めません: ${targetNote.title}</div>`;
+  }
+  const raw = await response.text();
+  const sectionMarkdown = token.heading ? extractHeadingSection(raw, token.heading) : raw;
+  if (!sectionMarkdown) {
+    return `<div class="embed embed-missing">見出しが見つかりません: ${displayLabel || token.heading}</div>`;
+  }
+  const html = await renderMarkdown(sectionMarkdown, targetNote, [...stack, currentNote.path, targetNote.path]);
+  const headingLabel = token.heading ? `${targetNote.title} / ${token.heading}` : targetNote.title;
+  return `<details class="embed embed-note" open><summary>${headingLabel}</summary>${html}</details>`;
 }
 
 async function loadNote(note) {
@@ -70,9 +267,9 @@ async function loadNote(note) {
     throw new Error(`ノートを読み込めませんでした: ${note.path}`);
   }
   const raw = await response.text();
-  const titles = Object.fromEntries(state.notes.map((entry) => [entry.slug, entry.title]));
-  const html = marked.parse(transformWikilinks(stripFrontmatter(raw), titles));
+  const html = await renderMarkdown(raw, note, [note.path]);
   contentEl.innerHTML = html;
+  addHeadingAnchors(contentEl);
   titleEl.textContent = note.title;
   metaEl.textContent = note.description ?? "";
   state.active = note.slug;
@@ -116,7 +313,7 @@ async function loadNotes() {
     (entry) => entry.type === "blob" && entry.path.startsWith("notes/") && entry.path.toLowerCase().endsWith(".md"),
   );
 
-  return files
+  const notes = files
     .filter((file) => !file.path.replace(/^notes\//, "").split("/").some((part) => part.startsWith(".")))
     .map((file) => {
       const relativePath = file.path.replace(/^notes\//, "");
@@ -126,12 +323,26 @@ async function loadNotes() {
       return {
         slug,
         title,
+        relativePath,
         path: `./${file.path}`,
         description: "",
         tags: [],
         excerpt: `ファイル: ${filename}`,
       };
     });
+
+  const assets = (data.tree || []).filter((entry) => {
+    return (
+      entry.type === "blob" &&
+      entry.path.startsWith("notes/") &&
+      !entry.path.toLowerCase().endsWith(".md") &&
+      !entry.path.replace(/^notes\//, "").split("/").some((part) => part.startsWith("."))
+    );
+  });
+
+  state.noteMap = new Map(notes.map((note) => [note.slug, note]));
+  state.assetMap = new Map(assets.map((asset) => [asset.path, asset]));
+  return notes;
 }
 
 function renderList(notes) {
