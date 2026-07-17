@@ -13,6 +13,14 @@ const state = {
   blockMap: new Map(),
 };
 
+if (window.mermaid) {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    securityLevel: "loose",
+  });
+}
+
 function getRepoInfo() {
   const host = window.location.hostname;
   const pathParts = window.location.pathname.split("/").filter(Boolean);
@@ -237,6 +245,13 @@ function renderMathInText(text) {
   return output;
 }
 
+function renderMermaidInText(text) {
+  const pattern = /```mermaid\s*\n([\s\S]*?)```/g;
+  return text.replace(pattern, (_, diagram) => {
+    return `@@MERMAID:${encodeURIComponent(diagram.trim())}@@`;
+  });
+}
+
 function restoreMathInHtml(html) {
   return html
     .replace(/@@MATHBLOCK:([^@]+?)@@/g, (_, encoded) => {
@@ -247,6 +262,13 @@ function restoreMathInHtml(html) {
       const formula = decodeURIComponent(encoded);
       return `<span class="math math-inline" data-formula="${escapeHtml(formula)}"></span>`;
     });
+}
+
+function restoreMermaidInHtml(html) {
+  return html.replace(/@@MERMAID:([^@]+?)@@/g, (_, encoded) => {
+    const diagram = decodeURIComponent(encoded);
+    return `<div class="mermaid">${escapeHtml(diagram)}</div>`;
+  });
 }
 
 function renderKatex(container) {
@@ -285,13 +307,24 @@ function renderEmbeddedYouTube(url) {
 
 async function renderMarkdown(markdown, currentNote, stack = []) {
   const { body } = extractFrontmatter(markdown);
-  const withMath = renderMathInText(body);
+  const withMermaid = renderMermaidInText(body);
+  const withMath = renderMathInText(withMermaid);
   const replaced = await replaceCustomSyntax(withMath, currentNote, stack);
   const html = marked.parse(replaced);
   const parser = new DOMParser();
-  const doc = parser.parseFromString(`<article>${restoreMathInHtml(html)}</article>`, "text/html");
+  const doc = parser.parseFromString(`<article>${restoreMermaidInHtml(restoreMathInHtml(html))}</article>`, "text/html");
   addHeadingAnchors(doc.body);
   renderKatex(doc.body);
+  if (window.mermaid) {
+    try {
+      await mermaid.run({ nodes: doc.body.querySelectorAll(".mermaid") });
+    } catch (error) {
+      doc.body.querySelectorAll(".mermaid").forEach((node) => {
+        node.classList.add("mermaid-error");
+        node.textContent = node.textContent || "Mermaid の描画に失敗しました";
+      });
+    }
+  }
   return doc.body.innerHTML;
 }
 
