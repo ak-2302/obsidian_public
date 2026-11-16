@@ -1,54 +1,14 @@
 <!doctype html>
 <html lang="ja">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>obsidian_public</title>
-    <meta
-      name="description"
-      content="Obsidian形式のノートを普通のWebページとして読める公開サイト"
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-    <link rel="stylesheet" href="./styles.css" />
-    <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.min.js"></script>
-    <script defer src="./app.js"></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Obsidian形式のノートを最新コミットから読むWebビューア" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Vault Viewer</title>
   </head>
   <body>
-    <div class="backdrop"></div>
-    <main class="shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <p class="eyebrow">Obsidian Public</p>
-          <h1>ノートをWebへ</h1>
-          <p class="lede">
-            Obsidian のノートを、そのまま読める公開ページにします。
-          </p>
-        </div>
-        <label class="search">
-          <span>ノートを検索</span>
-          <input id="search" type="search" placeholder="タイトルで絞り込む" />
-        </label>
-        <nav>
-          <ul id="note-list" class="note-list"></ul>
-        </nav>
-      </aside>
-
-      <section class="reader">
-        <header class="hero">
-          <p class="eyebrow">Published notes</p>
-          <h2 id="note-title">読み込み中</h2>
-          <p id="note-meta" class="meta"></p>
-        </header>
-        <article id="note-content" class="content"></article>
-      </section>
-    </main>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

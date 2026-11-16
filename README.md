@@ -1,49 +1,32 @@
-# obsidian_public
+# Obsidian R2 Viewer
 
-Obsidian 形式のノートを普通の Web ページとして公開するためのリポジトリです。
+private GitHubリポジトリの最新コミットをR2へ同期し、Obsidian記法を読みやすいWeb画面で表示するCloudflare Workerです。閲覧時はGitHub APIへアクセスせず、R2からMarkdownと添付資料を配信します。
 
-## できること
+## 構成
 
-- Markdown ノートの一覧表示
-- ノート本文の表示
-- Obsidian の `[[wikilink]]` を普通のリンクとして表示
-- GitHub Pages での公開
-- ノートファイルを自動収集して表示
-- `notes/` 以下の階層をまとめて対象にする
-- パス内のどこかが `.` 始まりなら下書きとして非表示
-- `![[ノート]]` の埋め込みに対応
-- `[[ノート#見出し]]` の見出し参照に対応
-- `[[ノート^blockid]]` のブロック参照に対応
-- `![[image.png]]` の画像埋め込みに対応
-- 数式の `\( ... \)`、`$...$`、`$$...$$` に対応
-- Mermaid 図のコードフェンスに対応
-- `![[https://www.youtube.com/watch?v=...]]` のような外部埋め込みに対応
+- GitHub `push` WebhookをWorkerが署名検証して受信する。
+- WorkerがGitツリーとR2マニフェストのSHAを比較し、変更されたファイルだけをR2へ同期する。
+- React画面がR2上のMarkdownを表示し、基本的なwikilink、画像・PDF・音声・動画の埋め込みに対応する。
 
-## 使い方
+## セットアップ
 
-1. `notes/` に Markdown ファイルを追加する
-2. 下書きは `notes/.draft.md` や `notes/sub/.draft.md` のように `.` 始まりにする
-3. GitHub Pages を有効にして公開する
+1. `npm install` を実行し、`npx wrangler r2 bucket create obsidian-vault-content` でバケットを作成する。
+2. `wrangler.jsonc` の `GITHUB_OWNER`、`GITHUB_REPO`、`GITHUB_BRANCH` を対象に合わせる。公開対象を絞る場合は `PUBLIC_PREFIX` に例えば `notes/` を設定する。
+3. `.dev.vars.example` を `.dev.vars` に複製し、開発用の値を設定する。本番では `npx wrangler secret put GITHUB_TOKEN`、`GITHUB_WEBHOOK_SECRET`、`SYNC_TOKEN` をそれぞれ登録する。
+4. `npm run build && npx wrangler deploy` を実行する。
+5. GitHubの対象リポジトリでWebhookを追加する。送信先は `https://<worker-domain>/api/webhook/github`、Content typeは `application/json`、イベントは `Just the push event`、Secretは `GITHUB_WEBHOOK_SECRET` と同一にする。
+6. 初回のみ `POST /api/admin/sync` に `Authorization: Bearer <SYNC_TOKEN>` を付けて同期する。
 
-## 動作環境
+## 必要な権限
 
-- GitHub Pages
-- 近年のブラウザ
+GitHub tokenはfine-grained PATまたはGitHub Appを使い、対象リポジトリだけの `Contents: Read` に限定する。トークンをコミット、クライアント、R2マニフェストへ保存しない。
 
-## ノートの書き方
+## 開発と検証
 
-- 通常の Markdown を使う
-- 見出し、箇条書き、引用、コードブロックに対応
-- ノート間リンクは `[[ノート名]]` 形式で記述する
-- 埋め込みは `![[ノート名]]` や `![[image.png]]` で書ける
-- 見出し参照は `[[ノート名#見出し]]` で書ける
-- ブロック参照は `[[ノート名^blockid]]` で書ける
-- 数式は `$...$` または `$$...$$` で書ける
-- Mermaid は ```` ```mermaid ```` のコードフェンスで書ける
-- YouTube は `![[https://www.youtube.com/watch?v=動画ID]]` で埋め込める
+```sh
+npm install
+npm run check
+npm run dev
+```
 
-## 公開のポイント
-
-- 公開したいノートは `notes/` 配下の任意の階層に `.md` で置く
-- 非公開の下書きはパス中のどこかを `.` 始まりにする
-- 画像を置く場合は、同じリポジトリ内の静的ファイルとして管理する
+`npm run dev` のR2はローカルエミュレーションであり、本番バケットを変更しない。

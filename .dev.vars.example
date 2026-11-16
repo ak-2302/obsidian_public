@@ -1,0 +1,6 @@
+# GitHubのfine-grained PAT。対象リポジトリのContents: Readのみを許可する。
+GITHUB_TOKEN=github_pat_replace_me
+# GitHub Webhook設定時に指定する任意のランダム文字列。
+GITHUB_WEBHOOK_SECRET=replace_me
+# 初回同期を手動で開始するための任意のランダム文字列。
+SYNC_TOKEN=replace_me
