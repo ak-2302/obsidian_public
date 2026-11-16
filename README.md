@@ -1,25 +1,22 @@
-# Obsidian R2 Viewer
+# Obsidian Local Viewer
 
-private GitHubリポジトリの最新コミットをR2へ同期し、Obsidian記法を読みやすいWeb画面で表示するCloudflare Workerです。閲覧時はGitHub APIへアクセスせず、R2からMarkdownと添付資料を配信します。
+private GitHubリポジトリをローカルへcloneし、閲覧リクエストごとに最新コミットを`git pull --ff-only`してObsidian記法を表示するNodeサーバーです。Cloudflare Tunnelで安全に公開できます。
 
 ## 構成
 
-- GitHub `push` WebhookをWorkerが署名検証して受信する。
-- WorkerがGitツリーとR2マニフェストのSHAを比較し、変更されたファイルだけをR2へ同期する。
-- React画面がR2上のMarkdownを表示し、基本的なwikilink、画像・PDF・音声・動画の埋め込みに対応する。
+- 初回アクセス時に対象リポジトリをcloneし、以後はアクセスごとにfast-forwardのみ許可してpullする。
+- React画面がローカル作業ツリーのMarkdownと添付資料を配信する。
+- Cloudflare Tunnelは公開経路のみを担い、Cloudflare Accessで認証を追加できる。
 
 ## セットアップ
 
-1. `npm install` を実行し、`npx wrangler r2 bucket create obsidian-vault-content` でバケットを作成する。
-2. `wrangler.jsonc` の `GITHUB_OWNER`、`GITHUB_REPO`、`GITHUB_BRANCH` を対象に合わせる。公開対象を絞る場合は `PUBLIC_PREFIX` に例えば `notes/` を設定する。
-3. `.dev.vars.example` を `.dev.vars` に複製し、開発用の値を設定する。本番では `npx wrangler secret put GITHUB_TOKEN`、`GITHUB_WEBHOOK_SECRET`、`SYNC_TOKEN` をそれぞれ登録する。
-4. `npm run build && npx wrangler deploy` を実行する。
-5. GitHubの対象リポジトリでWebhookを追加する。送信先は `https://<worker-domain>/api/webhook/github`、Content typeは `application/json`、イベントは `Just the push event`、Secretは `GITHUB_WEBHOOK_SECRET` と同一にする。
-6. 初回のみ `POST /api/admin/sync` に `Authorization: Bearer <SYNC_TOKEN>` を付けて同期する。
+1. `.env.example` を`.env`へ複製し、privateリポジトリURLと、他の用途に使わないローカル作業ツリーを設定する。
+2. `npm install && npm run serve` を実行する。Git認証はSSH鍵・ssh-agentまたはGit Credential Managerで事前に通しておく。
+3. `cloudflared tunnel --url http://localhost:8787` で一時公開する。恒久公開時はNamed TunnelとCloudflare Accessを設定する。
 
 ## 必要な権限
 
-GitHub tokenはfine-grained PATまたはGitHub Appを使い、対象リポジトリだけの `Contents: Read` に限定する。トークンをコミット、クライアント、R2マニフェストへ保存しない。
+Git認証情報をリポジトリや`.env`へコミットしない。HTTPSを使う場合もGit Credential Managerを用い、トークンは対象リポジトリだけの読み取り権限に限定する。
 
 ## 開発と検証
 
@@ -29,4 +26,4 @@ npm run check
 npm run dev
 ```
 
-`npm run dev` のR2はローカルエミュレーションであり、本番バケットを変更しない。
+`npm run dev` はローカル作業ツリーだけを読み書きする。公開先にはCloudflare Accessを設定し、閲覧者を制限する。
