@@ -27,3 +27,7 @@ npm run dev
 ```
 
 `npm run dev` はローカル作業ツリーだけを読み書きする。公開先にはCloudflare Accessを設定し、閲覧者を制限する。
+
+## Basic認証
+
+`.env` の `BASIC_AUTH_USER` と `BASIC_AUTH_PASSWORD` は必須です。サーバーはHTML、API、添付資料を含む全リクエストにHTTP Basic認証を要求します。十分に長いランダムなパスワードを使い、`.env`をコミットしないでください。Cloudflare TunnelはHTTPSを提供するため、認証情報は暗号化された接続上で送信されます。
